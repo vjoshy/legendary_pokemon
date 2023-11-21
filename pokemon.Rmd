@@ -1,0 +1,251 @@
+---
+title: "Legendary Pokemon Analysis"
+author: "Vinay Joshy"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+
+<style type="text/css">
+  body{
+  font-size: 12pt;
+  font-family: 'Monaco', 'Courier New', monospace;
+}
+</style>
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
+```
+
+# Introduction
+
+This report provides an analysis of the Pokemon dataset using R and various statistical and machine learning techniques. The analysis includes data exploration, visualization, and the development of predictive models to determine if a Pokemon is legendary. The data was obtained from [here](https://www.kaggle.com/datasets/rounakbanik/pokemon/)
+
+Let's first load necessary packages:
+
+```{r packages}
+library(tidyverse)    # data manipulation and visualization
+library(rpart)        # decision trees
+library(rpart.plot)   # decision tree plotting
+library(randomForest) # random forest packages
+library(ROCR)         # classifcations + AUC 
+
+```
+
+# Data Exploration
+
+We can start by importing the dataset, please change path as needed.
+
+```{r}
+# Import dataset
+pokedex <- read_csv("data/pokemon.csv", 
+                    col_types = cols(name = col_factor(), 
+                                     type1 = col_factor(),
+                                     is_legendary = col_factor()))
+```
+
+## Dataset Overview
+
+```{r}
+# Display the first six rows
+head(pokedex)
+
+# Examine the structure
+glimpse(pokedex)
+
+```
+
+### Legendary Pokemon Proportion
+
+```{r}
+
+# Prepare the data
+legendary_pokemon <- pokedex %>% 
+  count(is_legendary) %>% 
+  mutate(prop = n / nrow(pokedex))
+
+# Print the data frame
+head(legendary_pokemon)
+
+```
+
+## Visualisations
+
+Creating visualisations is a useful way of identifiying trends in our data.
+
+### Pokemon Distribution by Height and Weight
+
+```{r}
+
+# Prepare the plot
+legend_by_heightweight_plot <- pokedex %>% 
+  ggplot(aes(x = height_m, y = weight_kg)) +
+  geom_point(aes(color = is_legendary), size = 2, alpha = 0.5) +
+  geom_text(aes(label = ifelse(height_m > 7.5|weight_kg > 600, 
+                            as.character(name), '')), vjust = 0, hjust = 0) +
+  geom_smooth(method = "lm", se = FALSE, col = "black", linetype = "dashed") +
+  expand_limits(x = 16) +
+  labs(title = "Legendary Pokemon by height and weight",
+       x = "Height (m)",
+       y = "Weight (kg)") +
+  guides(color = guide_legend(title = "Pokemon status")) +
+  scale_color_manual(labels = c("Non-Legendary", "Legendary"),
+                     values = c("#F8730D", "#00eFC4")) +
+  theme_bw()
+
+# Print the plot
+legend_by_heightweight_plot
+
+```
+
+### Proportion of Legendary Pokemon by Type
+
+```{r}
+# Prepare the data
+legend_by_type <- pokedex %>% 
+    group_by(type1) %>% 
+    mutate(is_legendary = as.numeric(is_legendary) - 1) %>% 
+    summarise(prop_legendary = mean(is_legendary)) %>% 
+    ungroup() %>% 
+    mutate(type1 = fct_reorder(type1, prop_legendary))
+
+# Prepare the plot
+legend_by_type_plot <- legend_by_type %>% 
+    ggplot(aes(x = type1, y = prop_legendary, fill = prop_legendary)) + 
+    geom_col() +
+    labs(title = "Legendary Pokemon by type") +
+    coord_flip() +
+    guides(fill = "none") + theme_bw()
+
+# Print the plot
+legend_by_type_plot
+```
+
+### Pokemon Fight Statistics
+
+```{r}
+# Prepare the data
+legend_by_stats <- pokedex  %>% 
+  select(is_legendary, attack, sp_attack, defense, sp_defense, hp, speed)  %>% 
+  gather(key = "fght_stats", value = "value", -is_legendary) 
+
+# Prepare the plot
+legend_by_stats_plot <- legend_by_stats %>% 
+ ggplot(aes(x = is_legendary, y = value, fill = is_legendary)) +
+ geom_boxplot(varwidth = TRUE) +
+ facet_wrap(~fght_stats) +
+ labs(title = "Pokemon fight statistics",
+        x = "Legendary status") +
+ guides(fill = "none") + theme_bw()
+
+# Print the plot
+legend_by_stats_plot
+
+```
+
+# Machine Learning Analysis
+
+## Data  Splitting
+
+```{r}
+
+# Set seed for reproducibility
+set.seed(1234)
+
+# Save number of rows in dataset
+n <- nrow(pokedex)
+
+# Generate 60% sample of rows
+sample_rows <- sample(n, 0.6 * n)
+
+# Create training set
+pokedex_train <- pokedex  %>% 
+  filter(row_number() %in% sample_rows) 
+
+# Create test set
+pokedex_test <- pokedex  %>% 
+  filter(!row_number() %in% sample_rows) %>%
+  na.omit()
+
+```
+
+
+## Decision Tree Model
+
+```{r}
+# Load packages and set seed
+set.seed(1234)
+
+# Fit decision tree
+model_tree <- rpart(is_legendary ~ attack + defense + height_m + 
+                    hp + sp_attack + sp_defense + speed + type1 + weight_kg,
+                       data = pokedex_train,
+                       method = "class",
+                       na.action = na.omit)
+
+# Plot decision tree
+rpart.plot(model_tree)
+
+```
+
+## Random Forest Model
+
+```{r}
+# Load package and set seed
+set.seed(1234)
+
+# Fit random forest
+model_forest <- randomForest(is_legendary ~ attack + defense + height_m + 
+                         hp + sp_attack + sp_defense + speed + type1 + weight_kg,
+                         data = pokedex_train,
+                         importance = TRUE,
+                         na.action = na.omit)
+
+# Print model output
+model_forest
+
+
+```
+
+
+## Model Evaluation - ROC Curves
+
+```{r}
+# Create prediction and performance objects for the decision tree
+probs_tree <- predict(model_tree, pokedex_test, type = "prob")
+pred_tree <- prediction(probs_tree[,2], pokedex_test$is_legendary)
+perf_tree <- performance(pred_tree, "tpr", "fpr")
+
+# Create prediction and performance objects for the random forest
+probs_forest <- predict(model_forest, pokedex_test, type = "prob")
+pred_forest <- prediction(probs_forest[,2], pokedex_test$is_legendary)
+perf_forest <- performance(pred_forest, "tpr", "fpr")
+
+# Plot the ROC curves
+plot(perf_tree, col = "red", main = "ROC curves")
+plot(perf_forest, add = TRUE, col = "blue")
+legend(x = "bottomright",  legend = c("Decision Tree", "Random Forest"), fill = c("red", "blue"))
+
+```
+
+## Random Forest Variable Importance
+
+```{r}
+# Print variable importance measures
+importance_forest <- importance(model_forest)
+importance_forest
+
+# Create a dotchart of variable importance
+varImpPlot_forest <- varImpPlot(model_forest)
+varImpPlot_forest
+
+```
+
+# Conclusion
+
+In conclusion, this analysis provides insights into the distribution of Pokemon by various attributes and explores the predictive capabilities of decision tree and random forest models. The ROC curves and variable importance measures offer valuable information about the performance and key factors influencing the models.
