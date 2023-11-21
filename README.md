@@ -1,10 +1,3 @@
-<style type="text/css">
-  body{
-  font-size: 12pt;
-  font-family: 'Monaco', 'Courier New', monospace;
-}
-</style>
-
 # Introduction
 
 This report provides an analysis of the Pokemon dataset using R and
